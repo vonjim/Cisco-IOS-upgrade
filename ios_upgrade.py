@@ -53,12 +53,12 @@ def main():
 	f.close()
 
 
-def threadFunction(line, target, error_file):
-	copied, verified, boot, deleted = ['No']*4
-	verify_output = ''
-	ping_coutner = 1
-	switch_ip, new_ios, md5hash, old_ios_path = line.split(',')
-	
+def telnetWrite(tn, command, wait=1):
+	tn.write(command + '\n')
+	time.sleep(wait)
+
+
+def telnetLogon(switch_ip):
 	# Telnet to Switch 
 	try:
 		tn = Telnet(switch_ip, PORT, TIMEOUT)
@@ -81,29 +81,32 @@ def threadFunction(line, target, error_file):
 		error_file.write(err)
 		sys.exit(1)
 	time.sleep(1)
+
+	return tn
 	
-	tn.write("terminal length 0\n")
-	time.sleep(1)
+	
+def threadFunction(line, target, error_file):
+	copied, verified, boot, deleted = ['No']*4
+	verify_output = ''
+	ping_coutner = 1
+	switch_ip, new_ios, md5hash, old_ios_path = line.split(',')
+	
+	tn = TelnetLogon(switch_ip)
+
+	telnetWrite(tn, "terminal length 0")
 	
 	# Backup startup config
-	tn.write("copy run tftp\n")
-	time.sleep(1)
-	tn.write(TFTP_SERVER + '\n')
-	time.sleep(1)
-	tn.write('\n')
+	telnetWrite(tn, "copy run tftp")
+	telnetWrite(tn, TFTP_SERVER, 5)
 	print switch_ip + ': Copying running config to tftp'
-	time.sleep(5)
 	
 	# Copy IOS to flash
-	tn.write("copy tftp flash\n")
-	time.sleep(1)
-	tn.write(TFTP_SERVER + '\n')
-	time.sleep(1)
-	tn.write(new_ios + '\n')
-	time.sleep(1)
-	tn.write(new_ios + '\n')
+	telnetWrite(tn, "copy tftp flash")
+	telnetWrite(tn, TFTP_SERVER)
+	telnetWrite(tn, TFTP_SERVER)
+	telnetWrite(tn, new_ios)
+	telnetWrite(tn, new_ios, 1000)
 	print '{}: Copying IOS to flash'.format(switch_ip)
-	time.sleep(1000)
 	
 	# Gather output from verify IOS with md5 hash. If Verified is not in output string, close telnet session and thread
 	tn.write("verify /md5 flash:{} {}\n".format(new_ios, md5hash))
@@ -116,30 +119,25 @@ def threadFunction(line, target, error_file):
 		pass
 	
 	if 'Verified' not in verify_output:
-		err = switch_ip + ':\tFailed to verify IOS\n'
+		yerr = switch_ip + ':\tFailed to verify IOS\n'
 		error_file.write(err)
 		tn.close()
 		sys.exit(1)
 	else:
 		copied, verified = ['Yes']*2
 	
-	tn.write('conf t\n')
-	time.sleep(1)
-	tn.write('boot system flash:{}\n'.format(new_ios))
+	telnetWrite(tn, 'conf t')
+	telnetWrite(tn, 'boot system flash:{}'.format(new_ios))
 	print '{}: Configuring system boot path'.format(switch_ip)
-	time.sleep(1)
 	
 	# Save running configuration to NVRAM
-	tn.write('do write mem\n')
+	telnetWrite(tn, 'do write mem', 5)
 	print '{}: Writing to memory'.format(switch_ip)
-	time.sleep(5)
 
 	# Reboot Switch in 1 minute
-	tn.write('do reload in 1\n')
-	time.sleep(1)
-	tn.write('\n')
+	telnetWrite(tn, 'do reload in 1')
 	print '{}: Rebooting in 1 minute'.format(switch_ip)
-	time.sleep(65)
+	telnet.Write(tn , '', 65)
 	print '{}: Rebooting... '.format(switch_ip)
 	tn.close()
 	# Wait  minutes for switch to reboot before telneting onto switch
@@ -159,41 +157,18 @@ def threadFunction(line, target, error_file):
 				sys.exit(1)
 				break
 	
-	try:
-		tn = Telnet(switch_ip, PORT, TIMEOUT)
-	except:
-		err = switch_ip + ":\tPost reboot connection error\n"
-		error_file.write(err)
-		sys.exit(1)
-	try:
-		tn.read_until("username: ", READ_TIMEOUT)
-		tn.write(USER + "\n")
-	except:
-		err = switch_ip + ':\tPost reboot Login Prompt Error\n'  
-		error_file.write(err)
-		sys.exit(1)
-	try:
-		tn.read_until("password: ", READ_TIMEOUT)
-		tn.write(PWD + "\n")
-	except:
-		err = switch_ip + ':\tPost reboot Password Prompt Error\n'
-		error_file.write(err)
-		sys.exit(1)	
-	time.sleep(1)
+	tn = telnetLogon(switch_ip)
 	
-	tn.write("terminal length 0\n")
-	time.sleep(1)
-	
+	telnetWrite(tn, "terminal length 0")
 		
 	# Verify system booted into new IOS
-	tn.write("show version\n")
-	time.sleep(1)
+	telnetWrite(tn , "show version")
+		
 	
 	if 'System image file is \"flash:{}\"'.format(new_ios) in tn.read_very_eager():
 		# Delete old IOS
 		print switch_ip + ': Deleting OLD IOS'
-		tn.write("delete /force {}\n".format(old_ios_path))
-		time.sleep(5)
+		telnetWrite(tn, "delete /force {}".format(old_ios_path), 5)
 		boot, deleted = ['Yes']*2
 	else:
 		err = switch_ip + ':\tNew IOS not set in boot system path\n'
